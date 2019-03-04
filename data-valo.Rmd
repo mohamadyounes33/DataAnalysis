@@ -1,0 +1,43 @@
+#required installations
+#install.packages("readr")
+#install.packages("repr")
+
+#importing required libraries
+library(ggplot2) #to draw plots
+library(readr)   #to read csv files
+library(repr)    #string and binary representations of objects
+options(repr.plot.width = 4, repr.plot.height = 3.5)
+
+#loading data
+anime_dataset <- read.csv("Documents/SI4/S8/DataValo/project-data-analysis/data/anime.csv")
+#rating_dataset <- read.csv("Documents/SI4/S8/DataValo/project-data-analysis/data/rating.csv",
+#stringsAsFactors=T)
+
+#data processing : removing uncomplete rows
+#nrow(anime_dataset)   #12294 row
+#anime_dataset <- anime_dataset[!is.na(anime_dataset$rating), ]
+#nrow(anime_dataset)   #12064 row
+#anime_dataset <- anime_dataset[anime_dataset$episodes != 'Unknown',]
+#anime_dataset$episodes <- as.numeric(as.character(anime_dataset$episodes))
+#nrow(anime_dataset)   #11876 row
+nrow(anime_dataset)
+anime_dataset <- anime_dataset[!is.na(anime_dataset$type), ]
+anime_dataset <- anime_dataset[anime_dataset$type != ' ', ]
+nrow(anime_dataset)
+
+#doesn't work ...
+#genre_set = c()
+
+#for (genre in anime_dataset$genre ) 
+#  g <- genre
+#  as.list(strsplit(g, ","))
+#  genre_set = union(genre_set, g)
+#genre_set
+
+# anime types distribution
+type_table <- table(anime_dataset$type)
+type_table <- sort(type_table, decreasing=T)
+labelsToPrint <- paste(names(type_table))
+barplot(type_table, main="anime types distribution", col=c("blue"))
+
+
