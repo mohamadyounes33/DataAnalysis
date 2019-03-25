@@ -1,6 +1,173 @@
+Valorisation des données :
+Kaggle dataset: https://www.kaggle.com/azathoth42/myanimelist#AnimeList.csv
+
+
+Business objectif : Recommend anime to users
+
+Business question : 
+
+
+Population : MyAnimeList users
+
+Sampling strategy : Stratisfied sampling :
+
+	Sampling users or anime ???
+users are defined by: 
+user_id user_watching
+user_completed user_onhold
+user_dropped
+user_plantowatchuser_days_spent_watching
+gender
+location
+birth_date access_rank
+join_date
+last_online
+stats_mean_score
+stats_rewatched
+stats_episodes
+
+important attributes are : birth_date, location, gender
+These variables will have the values: 
+*birth_date = Enfant, Jeune, Adolescent
+*location  = Amérique, Afrique, Europe, Asie
+*gender  = H, M
+That makes 4*3*2= 24 possible clusters  (Enfant, Amerique, H par exemple)
+once clusters are done, we make sub-samples while keeping a portion (25% of cluster for example). the percentage will keep the presentation of the population (A is twice present than B, after sub-sampling, we will have 2 times of A more than B)
+
+
+a problem in the dataset that one location could have different names eg:
+USA != Etats unis != United States of America
+
+
+Ordre de Sampling- Sub_sampling - Filtering ?
+be :
+Sampling - Filtering - sub_sampling :
+	Avantage : le filtering se fait sur une petite population (sample) 
+	Désavantage : si on modifie la population (on a besoin d’un sample plus grand), on doit refaire le filtering ! Le filtering sera trop propre, donc ne représentera pas la population………………………………………………………………………….
+
+Filtering - Sampling -  sub_sampling :
+	Avantage : on commence par une dataset clean, ca répond au désavantage de SFS.
+	Désavantage : on perd l’objectif de Sampling parce que le filtering sera fait sur toute la dataset (ca peut etre lent!)
+
+Dans un premier temps, on va faire un 
+
+Cluster pas bon, car SRS sur cluster et non sur population dans cluster.
+
+Cleaning data
+Remove irrelevant columns
+```{r}
+dataset <- read.csv("../UserList.csv")
+# remove user names since we already have user id
+dataset[1] <- NULL
+# remove user watch history
+dataset[2:7] <-list(NULL)
+# remove other irrelevant columns data
+dataset[5:14] <-list(NULL)
+```
+
+country to continent
+```{r}
+library(countrycode)
+UserList$continent <- countrycode(sourcevar = UserList$location,
+                            origin = "country.name",                             
+                            destination = "continent")
+```
+
+Dealing with missing data (NA)
+```{r}
+UserList <- na.omit(UserList)
+UserCleaned <-  UserList[-which(UserList$gender == ""), ]
+UserCleaned <- UserCleaned[-which(UserCleaned$birth_date == ""), ]
+```
+delete birthdates between 2014 and 2019 from dataset
+```{r}
+UserCleaned <- UserCleaned[!grepl("2019", UserCleaned$birth_date),]
+UserCleaned <- UserCleaned[!grepl("2018", UserCleaned$birth_date),]
+UserCleaned <- UserCleaned[!grepl("2017", UserCleaned$birth_date),]
+UserCleaned <- UserCleaned[!grepl("2016", UserCleaned$birth_date),]
+UserCleaned <- UserCleaned[!grepl("2015", UserCleaned$birth_date),]
+UserCleaned <- UserCleaned[!grepl("2014", UserCleaned$birth_date),]
+UserCleaned <- UserCleaned[!grepl("9001", UserCleaned$birth_date),]
+```
+birthdates to ages:
+```{r}
+library(eeptools)
+UserCleaned$age <- floor(age_calc(as.Date(UserCleaned$birth_date), enddate = Sys.Date(), units = "years"))
+```
+ages to age groups:
+```{r}
+labs <- c(paste("Child"), paste("Teen"),paste("Young"),paste("Adult"),paste("Elder"))
+UserCleaned$ageGroup <- cut(UserCleaned$age, breaks = c(5,12, 17,21,46,90), labels = labs, right = FALSE)
+
+```
+
+remove old useless columns:
+```{r}
+UserCleaned[3:4] <- list(NULL)
+```
+fix row names
+```{r}
+#rownames(UserCleaned) <- seq(length=nrow(UserCleaned))
+rownames(UserCleaned) <- NULL 
+
+```
+save cleaned dataset:
+```{r}
+write.csv(UserCleaned,"userListCleaned.csv")
+```
+
+
+Graph presentations for the dataset:
+gender-age graph
+```{r}
+# required packages
+#install.packages("XML")
+#install.packages("reshape2")
+#install.packages("plyr")
+#install.packages("ggplot2")
+library(XML)
+library(reshape2)
+library(plyr)
+library(ggplot2)
+source('http://klein.uk/R/Viz/pyramids.R')
+
+popGH <- UserCleaned[,]
+## cut the age variable into age groups with 5-year intervals
+
+popGH$AGEcut <- cut(popGH$age, breaks = seq(5, 90, 10 ), right = FALSE) 
+popGH$Population <- 1 ## each sampled respondent represents 10 individuals
+popGH$Gender <- popGH$gender
+
+## aggregate the data by gender and age group
+popGH <- aggregate(formula = Population ~ Gender + AGEcut, data = popGH, FUN = sum)
+
+## sort data by first by gender, then by age groups
+popGH <- with(popGH, popGH[order(Gender,AGEcut),])
+
+
+## only use the three variables age, gender and population from the popGH data
+popGH <- popGH[,c("AGEcut","Gender","Population")]
+
+## barplots for male populations goes to the left (thus negative sign)
+popGH$Population <- ifelse(popGH$Gender == "Male", -1*popGH$Population, popGH$Population)
+
+## pyramid charts are two barcharts with axes flipped
+pyramidGH2 <- ggplot(popGH, aes(x = AGEcut, y = Population, fill = Gender)) + 
+  geom_bar(data = subset(popGH, Gender == "Female"), stat = "identity") +
+  geom_bar(data = subset(popGH, Gender == "Male"), stat = "identity") + 
+  coord_flip()
+pyramidGH2
+```
+
+
+
+
+Soufiane's job
+```{r}
 #required installations
 #install.packages("readr")
 #install.packages("repr")
+install.packages(eeptools)
 
 #importing required libraries
 library(ggplot2) #to draw plots
@@ -9,7 +176,7 @@ library(repr)    #string and binary representations of objects
 options(repr.plot.width = 4, repr.plot.height = 3.5)
 
 #loading data
-anime_dataset <- read.csv("Documents/SI4/S8/DataValo/project-data-analysis/data/anime.csv")
+anime_dataset <- read.csv("../anime_cleaned.csv")
 #rating_dataset <- read.csv("Documents/SI4/S8/DataValo/project-data-analysis/data/rating.csv",
 #stringsAsFactors=T)
 
@@ -39,5 +206,26 @@ type_table <- table(anime_dataset$type)
 type_table <- sort(type_table, decreasing=T)
 labelsToPrint <- paste(names(type_table))
 barplot(type_table, main="anime types distribution", col=c("blue"))
+```
+
+Point estimation for relation between age and time spent watching
+```{r}
+library(eeptools)
+# User days spent watching anime
+#loading data
+user_dataset <- read.csv("../User.csv")
+# take a random sample of size 50000
+mysample <- user_dataset[sample(1:nrow(user_dataset), 5, replace=FALSE),]
+#days_spent_watching <- table(floor(age_calc(as.Date(mysample$birth_date), units = "years")), mysample$user_days_spent_watching)
+# ages <- floor(age_calc(as.Date(mysample$birth_date), enddate = Sys.Date(), units = "years"))
+#barplot(days_spent_watching,  main = "Days spent watching by users")
+# age_watchTime <- c(8, 11)
+
+#y <- as.vector(mysample[age_watchTime])
+#plot(y)
+mysample
+```
+
+
 
 
