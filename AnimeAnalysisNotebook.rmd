@@ -1,0 +1,868 @@
+---
+title: "Analyze of anime database"
+output: html_notebook
+editor_options: 
+  chunk_output_type: inline
+---
+
+
+> Team : Soufiane **AOURINMOUCHE**, Damien **CLEMENCEAU**, Damien **MASSOL**, Mohamed **YOUNES**
+
+###### Database URL : https://www.kaggle.com/CooperUnion/anime-recommendations-database 
+
+File presentation :
+
+  * AnimeList.csv : Contains a list of anime and their characteristics
+  * UserList.csv : Contains a list of user and information about their profiles
+  * UserAnimeList.csv : Contains notations given by certains users for certain animes
+  
+Goals :
+
+  * Business goal : Recommend anime to user
+  * Population : MyAnimeList users
+  * Technical goal : Recommendation system
+
+# AnimeList.csv analyze
+## Packages and libraries needed for the analysis
+
+```{r}
+install.packages("devtools", dependencies = T)
+install.packages("fastDummies", dependencies = T) #For dummy variable
+library(devtools)
+install_github("vonjd/OneR")
+```
+
+```{r}
+install.packages("corrplot") #For correlation matrix
+source("http://www.sthda.com/upload/rquery_cormat.r")
+```
+
+```{r}
+library("ggplot2") # Data visualization
+library("RColorBrewer")
+library("plotly")
+library("OneR") #For bins
+```
+
+
+
+
+
+## Creating variable
+
+```{r}
+data_anime=read.csv(file = "../AnimeList.csv", stringsAsFactors = TRUE)
+head(data_anime)
+```
+
+
+
+
+## Data preprocessing
+
+### Deleting anime with unvalid type
+```{r}
+valid_type = c("ONA","OVA","Special","TV","Movie") #No Music Type
+data_anime = subset(data_anime, type %in% valid_type)
+data_anime$episodes <- as.numeric(as.character(data_anime$episodes))
+```
+
+### Deleting not aired and 0 ep
+```{r}
+data_anime = subset(data_anime, !status %in% c("Not yet aired"))
+data_anime = subset(data_anime, !episodes %in% c(0))
+data_anime = subset(data_anime, !episodes %in% c(NA))
+```
+
+### Deleting useless columns
+```{r}
+useless_column <- c("title_english","title_japanese","title_synonyms", "image_url", "aired", "aired_string", "background", "broadcast", "related", "producer", "licensor", "opening_theme", "ending_theme", "premiered", "studio")
+
+for(j in 1:length(useless_column)){
+  data_anime[,useless_column[j]] <- NULL
+}
+
+```
+
+
+### Creation of columns for each genre
+```{r}
+possible_names = c()
+genres_names <- data_anime$genre
+for(line in 1:length(genres_names)){
+  l <- genres_names[line]
+  l <- gsub("\n","",l)
+  l <- gsub(" ","",l)
+  vect <- unlist(strsplit(l, ","))
+  possible_names = union(possible_names, vect)
+}
+print("Possible genre : ")
+print(possible_names)
+
+data_anime_g <- data_anime
+
+for(g in 1:length(possible_names)){
+  if(!is.na(possible_names[g])) data_anime_g[,possible_names[g]] = 0 #Setting all genre to FALSE
+}
+
+```
+
+
+```{r}
+#Filling genre in data frame
+for (line in 1:nrow(na.omit(data_anime_g))) {
+  str_g_line <- data_anime_g[line, "genre"]
+  str_g_line <- gsub("\n","",str_g_line)
+  str_g_line <- gsub(" ","",str_g_line)
+  vect_g <- unlist(strsplit(str_g_line, ","))
+  if(length(vect_g) > 0){
+    for(g in 1:length(vect_g)){
+      if(!is.na(vect_g[g])){
+        data_anime_g[line,vect_g[g]] = 1 
+      }
+    }
+  }
+}
+```
+
+
+
+
+
+
+
+
+
+
+## Summary AnimeList.csv
+
+```{r}
+summary(data_anime)
+```
+
+```{r}
+write.csv(data_anime,"animeListCleaned.csv")
+```
+
+
+
+
+
+## Graphs
+
+### Type repartition
+```{r}
+types_frame <- as.data.frame(table(data_anime_g$type))
+colnames(types_frame) <- c("Type","Occ") #Renaming the columns
+#aes pour aesthetics
+types_frame <- types_frame[order(types_frame$Occ),]
+print(types_frame)
+type_plot <- ggplot(types_frame, aes(x=Type, y = Occ, fill=Occ)) + geom_bar(stat="identity")
+type_plot <- type_plot + ggtitle("Repartition des animes \n en fonction du Type") + xlab("Type d'anime") + ylab("Nombre d'occurences")
+
+print(type_plot)
+#ggplot(types_frame, aes(x=Type, y = Occ, fill="red")) + geom_bar(stat="identity")
+```
+
+
+### Note repartition
+```{r}
+note_table = table(bin(data_anime$score, nbins=10))
+note_bin_frame <- as.data.frame(note_table)
+colnames(note_bin_frame) <- c("Score","Occurences") #Renaming the columns
+note_plot <- ggplot(note_bin_frame, aes(x=Score, y = Occurences, fill=Occurences)) + geom_bar(stat="identity", width=.75)
+note_plot <- note_plot + theme(axis.text.x= element_text(size=7))
+
+print(note_plot)
+```
+
+
+### Average by type
+```{r}
+type_and_note_frame <- data_anime[c("score", "type")]
+mean_frame <- aggregate(type_and_note_frame$score, list(type_and_note_frame$type), mean, na.rm=TRUE, na.action=NULL)
+names(mean_frame) <- c("Type", "Moyenne")
+
+ggplot(mean_frame, aes(x=Type, y = Moyenne, fill=Moyenne)) + geom_bar(stat="identity")
+
+```
+
+
+### Genre repartition (Ordonn?e zarb)
+```{r}
+genre_frame <- data.frame(possible_names, rep(0,times=length(possible_names)))
+colnames(genre_frame) <- c("Genre","Occ") #Renaming the columns
+
+firstGenreIndex = 16
+for(i in firstGenreIndex:ncol(data_anime_g)){
+  table_temp <- table(data_anime_g[,i])
+  genre_frame[i-firstGenreIndex,] = c(colnames(data_anime_g)[i],table_temp["1"])
+}
+
+
+genre_plot <- ggplot(head(genre_frame), aes(x=Genre, y = Occ)) + geom_bar(stat="identity")
+genre_plot <- genre_plot + ggtitle("Repartition des animes \n en fonction du Genre") + xlab("Genre") + ylab("Nombre d'occurences")
+
+print(genre_plot)
+print(genre_frame)
+
+```
+
+
+### Graphe Seringue
+```{r}
+par(mfrow = c(3,1))
+boxplot(data_anime[,c("score")], names = colnames(data_anime)[c("score")], col="darkgreen",horizontal=TRUE)
+boxplot(data_anime[,c("members")], names = colnames(data_anime)[c("members")], col="darkblue",horizontal=TRUE,outline=FALSE)
+boxplot(data_anime[,c("episodes")], names = colnames(data_anime)[c("episodes")], col="darkgrey",horizontal=TRUE,outline=FALSE)
+
+```
+
+
+
+
+### Correlation matrix
+```{r}
+
+#Creating dummy variable for the type
+data_anime_num <- fastDummies::dummy_cols(data_anime_g, select_columns = "type")
+firstMatrixData <- data_anime_num[, c("episodes", "score", "scored_by", "rank", "popularity", "members", "favorites", "type_TV", "type_OVA","type_ONA", "type_Movie", "type_Special")]
+rquery.cormat(firstMatrixData)
+
+```
+
+
+### Density
+
+```{r}
+par(mfrow=c(2,2))
+ggplot(data = data_anime_g, aes(x = score)) + geom_density()
+ggplot(data = data_anime_g, aes(x = popularity)) + geom_density()
+ggplot(data = data_anime_g, aes(x = episodes)) + geom_density()
+```
+
+
+
+# UserList.csv analyze
+
+Important attributes are : birth_date, location, gender
+
+These variables will have the values: 
+
+  *birth_date => Child, Teen , Young, Adult, Elder
+  *location  => America, Africa, Europe, Asia
+  *gender  => Male, Female, Other
+
+That makes 4*3*2= 24 possible clusters  (Enfant, Amerique, H par exemple)
+
+Once clusters are done, we make sub-samples while keeping a portion (25% of cluster for example). the percentage will keep the presentation of the population (A is twice present than B, after sub-sampling, we will have 2 times of A more than B)
+
+
+
+
+## Cleaning data
+
+A problem in the dataset that one location could have different names eg :
+USA != Etats unis != United States of America
+
+### Remove irrelevant columns
+
+```{r}
+dataset <- read.csv("../UserList.csv")
+# remove user names since we already have user id
+#dataset[1] <- NULL
+# remove user watch history
+dataset[2:7] <-list(NULL)
+# remove other irrelevant columns data
+dataset[5:14] <-list(NULL)
+
+UserList <- dataset
+```
+
+
+
+### Country to continent
+
+```{r}
+install.packages("countrycode")
+```
+
+```{r}
+#It takes a long time
+library(countrycode)
+UserList$continent <- countrycode(sourcevar = UserList$location,
+                            origin = "country.name",                             
+                            destination = "continent")
+
+```
+
+### Dealing with missing data (NA)
+
+```{r}
+UserList <- na.omit(UserList)
+UserCleaned <- UserList[-which(UserList$gender == ""), ]
+UserCleaned <- UserCleaned[-which(UserCleaned$birth_date == ""), ]
+```
+### Delete birthdates between 2014 and 2019 from dataset
+
+```{r}
+UserCleaned <- UserCleaned[!grepl("2019", UserCleaned$birth_date),]
+UserCleaned <- UserCleaned[!grepl("2018", UserCleaned$birth_date),]
+UserCleaned <- UserCleaned[!grepl("2017", UserCleaned$birth_date),]
+UserCleaned <- UserCleaned[!grepl("2016", UserCleaned$birth_date),]
+UserCleaned <- UserCleaned[!grepl("2015", UserCleaned$birth_date),]
+UserCleaned <- UserCleaned[!grepl("2014", UserCleaned$birth_date),]
+UserCleaned <- UserCleaned[!grepl("9001", UserCleaned$birth_date),]
+```
+
+### Birthdates to ages:
+
+```{r}
+install.packages("eeptools")
+```
+
+```{r}
+library(eeptools)
+UserCleaned$age <- floor(age_calc(as.Date(UserCleaned$birth_date), enddate = Sys.Date(), units = "years"))
+```
+
+### Ages to age groups:
+
+```{r}
+labs <- c(paste("Child"), paste("Teen"),paste("Young"),paste("Adult"),paste("Elder"))
+UserCleaned$ageGroup <- cut(UserCleaned$age, breaks = c(5,12, 17,21,46,90), labels = labs, right = FALSE)
+```
+
+
+
+### Remove old useless columns:
+
+```{r}
+UserCleaned[3:4] <- list(NULL)
+```
+
+### Fix row names
+
+```{r}
+#rownames(UserCleaned) <- seq(length=nrow(UserCleaned))
+rownames(UserCleaned) <- NULL 
+```
+
+### Save cleaned dataset:
+
+```{r}
+write.csv(UserCleaned,"userListCleaned.csv")
+```
+
+
+
+
+
+## Graph presentations for the dataset:
+### Gender-age graph
+
+```{r}
+UserCleaned <- read.csv(file = "../ul.csv")
+```
+
+```{r}
+install.packages("XML")
+install.packages("reshape2")
+install.packages("ggplot2")
+```
+
+```{r}
+install.packages("plyr")
+```
+
+```{r}
+# required packages
+library(XML)
+library(reshape2)
+library(plyr)
+library(ggplot2)
+source('http://klein.uk/R/Viz/pyramids.R')
+popGH <- UserCleaned[,]
+## cut the age variable into age groups with 5-year intervals
+popGH$AGEcut <- cut(popGH$age, breaks = seq(5, 90, 10 ), right = FALSE) 
+popGH$Population <- 1 ## each sampled respondent represents 10 individuals
+popGH$Gender <- popGH$gender
+## aggregate the data by gender and age group
+popGH <- aggregate(formula = Population ~ Gender + AGEcut, data = popGH, FUN = sum)
+## sort data by first by gender, then by age groups
+popGH <- with(popGH, popGH[order(Gender,AGEcut),])
+## only use the three variables age, gender and population from the popGH data
+popGH <- popGH[,c("AGEcut","Gender","Population")]
+## barplots for male populations goes to the left (thus negative sign)
+popGH$Population <- ifelse(popGH$Gender == "Male", -1*popGH$Population, popGH$Population)
+## pyramid charts are two barcharts with axes flipped
+pyramidGH2 <- ggplot(popGH, aes(x = AGEcut, y = Population, fill = Gender)) + 
+  geom_bar(data = subset(popGH, Gender == "Female"), stat = "identity") +
+  geom_bar(data = subset(popGH, Gender == "Male"), stat = "identity") + 
+  coord_flip()
+pyramidGH2
+```
+
+
+
+```{r}
+boxplot(UserCleaned[,c("age")], names = colnames(UserCleaned)[c("age")], col="darkgreen",horizontal=TRUE)
+```
+
+
+# Recommandation systeme
+## Preprocessing UserAnimeList
+Load userCleaned
+```{r}
+user_cleaned=read.csv(file = "../userListCleaned.csv", stringsAsFactors = TRUE)
+
+```
+
+Open file and remove useless column
+```{r}
+CHUNK_SIZE = 1000
+ACTUAL_POSITION = 0
+NB_ROW = 46358322
+col_name = TRUE
+connection = file("../UserAnimeList.csv", "r")
+column_names = colnames(read.csv(connection, nrows = 1))
+while(ACTUAL_POSITION < NB_ROW){
+  chunk <- read.csv(connection, nrows = CHUNK_SIZE)
+  colnames(chunk) <- column_names
+  ACTUAL_POSITION = CHUNK_SIZE + ACTUAL_POSITION
+  filtered_chunk <- chunk[which(chunk$my_status == 2 || chunk$my_status == 3 || chunk$my_status == 1), ]
+  valid_username <- chunk$username[chunk$username %in% user_cleaned$username]
+  filtered_chunk <- chunk[which(chunk$username %in% valid_username), ]
+  # print(filtered_chunk)
+  
+  if(col_name){
+    write.table(filtered_chunk[c("username","anime_id","my_score")], "../UserAnimeList-R-Ultimate.csv", append=TRUE, sep=",", row.names=FALSE, quote=FALSE)
+    col_name = FALSE
+  } else {
+    write.table(filtered_chunk[c("username","anime_id","my_score")], "../UserAnimeList-R-Ultimate.csv", append=TRUE, sep=",",col.names=FALSE, row.names=FALSE, quote=FALSE )
+  }
+}
+close(connection)
+```
+
+
+## Clusters
+```{r}
+#setwd("/Users/soufianeaourinmouche/Documents/SI4/S8/DataValo/project-data-analysis/recommendation-sys")
+
+#getwd()
+
+#install.packages("factoextra")
+
+#install.packages("ggplot2")
+
+library("factoextra") # clustering algorithms & visualization
+
+library(cluster)
+
+# users est une copie de la dataset, qui va ?tre transfrom?e en labels 
+
+users <- read.csv("userListCleaned.csv", header=TRUE)
+
+# users_clean est une copie de la dataset, qui va servir ? trouver le rang d'un user
+
+users_clean <- read.csv("userListCleaned.csv", header=TRUE)
+
+# supprimer les colonnes qui ne servent pas : numer de ligne, username, user_id
+
+users <- users[,-1]
+
+users <- users[,-1]
+
+users <- users[,-1]
+
+#users <- users[,-4]
+
+head(users)
+
+# numerisation des colonnes : 
+
+# genre (Male : 1, Female : 2) 
+
+is.factor(users$gender)
+
+users$gender <- as.numeric(users$gender)
+
+# continent (Africa : 1, Americans : 2, Asia : 3, Europe : 4, Oceania : 5) 
+
+is.factor(users$continent)
+
+users$continent <- as.numeric(users$continent)
+
+# ageGroup (Adult : 1, Child : 2, Elder : 3, Teen : 4, Young : 5)
+
+is.factor(users$ageGroup)
+
+users$ageGroup <- as.numeric(users$ageGroup)
+
+#head(users)
+
+# attribuer pour chaque colonne des labels ? ses valeurs
+
+gender_numerical_set <- list(Male=1, Female=2)
+
+continents_numerical_set <- list(Africa=1, Americas=2, Asia=3, Europe=4, Oceania=5)
+
+ageGroups_numerical_set <- list(Adult=1, Child=2, Elder=3, Teen=4, Young=5)
+
+# supprimer les valeurs NA (elles existent pas, mais on ne sait jamais !)
+
+users <- na.omit(users)
+
+# normalisation des valeur de la dataset, pour qu'elles soient comparable
+
+# ils ont d?sormais mean = 0, et sd = 1
+
+users <- scale(users)
+
+head(users)
+
+# premi?re exp?rimentation : calculer kmeans avec k = 50
+
+# la dataset contient 3 colonnes : gender, continent, ageGroup
+
+# gender a 2 valeurs possibles, continent a 5 et ageGroup a 5
+# le nombre de combinaisons possible est alors : 2*5*5 = 50
+k <- kmeans(users, centers = 50, nstart = 25, iter.max=1000,  algorithm="Lloyd")
+str(k)
+# Cherchons le nombre optimal de clusters pour le dataset
+set.seed(123)
+
+
+
+# METHODE 1  : ELBOW METHOD
+# fonction qui calcule le total within-cluster sum of square
+wss <- function(k) {
+  kmeans(users, k, nstart = 10 )$tot.withinss
+}
+# calculer wss pour k de 1 ? 15
+k.values <- 1:35
+# dessiner le graphe de wss
+
+#install.packages("purrr")
+library(purrr)
+wss_values <- map_dbl(k.values, wss)
+
+plot(k.values, wss_values,
+       type="b", pch = 19, frame = FALSE, 
+       xlab="Number of clusters K",
+       ylab="Total within-clusters sum of squares")
+# dessiner le graphe de la methode elbow pour trouver le nombre de kmeans optimal        
+#fviz_nbclust(users, kmeans, method = "wss")
+
+# METHODE 2  : Silhouette
+
+# Le probl?me avec cette m?thode Silhouette, est que pour un grand ensemble de donn?es
+# 58 000, elle n?cessite beaucoup de m?morie (12.8 GB) ce que nos ordinateurs n'assurent
+# pas, on va la faire sur un sous-ensemble de 40 000 lignes.
+#users3 <- users[1:40000,]
+
+#fviz_nbclust(users3, kmeans, method = "silhouette")
+# ce code ci-dessous, est ?quivalent ? la commande ci-dessus
+#k.max = 10
+#sil <- rep(0, k.max)
+#for(i in 2:k.max){
+#  km.res <- kmeans(users, i, nstart = 25)
+#  ss <- silhouette(km.res$cluster, dist(users))
+#  sil[i] <- mean(ss[, 3])
+#}
+# Plot the  average silhouette width
+#plot(1:k.max, sil, type = "b", pch = 19, frame = FALSE, xlab = "Number of clusters k")
+#abline(v = which.max(sil), lty = 2)
+
+
+
+# METHODE 3  : Cluster gaps
+#doesn't work : clusGap not found
+#set.seed(123)
+#gap_stat <- clusGap(users3, FUN = kmeans, nstart = 25, K.max = 10, B = 50)
+#fviz_gap_stat(gap_stat)
+
+
+
+# Suite aux r?sultats des 3 algorithmes pour trouver le nombre de clusters optimal, 
+# nous avons d?cider d'utiliser k=6 pour l'analyse finale
+print("\n\n on essaye avec k6\n\n")
+k6 <- kmeans(users, centers = 6, nstart = 25, iter.max=1000, algorithm="Lloyd")
+str(k6)
+# fonction qui retourne le rang d'un user dans la dataset
+# prend en arguments : user et la dataset
+# retourne le rang, -1 si introuvable
+get_rang_in_users_dataset <- function(k, dataset) {
+  for (i in 1:(nrow(dataset) )) {
+    if ( dataset[i,]$user_id == k$user_id ) {
+      return(i)
+    }
+  }
+  print("user not found in dataset !")
+  return(-1)
+}
+# fonction qui retourne le rang d'un user dans la dataset
+# prend en arguments : user_id et la dataset
+# retourne le rang, -1 si introuvable
+get_rand_in_users_dataset_by_id <- function(id, dataset) {
+  for (i in 1:(nrow(dataset))) {
+    if (dataset[i,]$user_id == id) {
+      return(i)
+    }
+  }
+  print("user not found in dataset !")
+  return(-1)
+}
+# test qui retourne -1
+# get_rand_in_users_dataset_by_id(2478933391, users_clean)
+# test qui marche
+#get_rand_in_users_dataset_by_id(158248, users_clean)
+# fonction qui retourne le numero du cluster d'un user 
+# elle prend en argument l'identifiant de l'user, et le K-mean utilis?
+# retourn -1 si user introuvable !
+    get_cluster <- function(user_id, k) {
+    user_rang = get_rand_in_users_dataset_by_id(user_id, users_clean)
+    
+    if ( user_rang == -1 ) {
+      print("Erreur dans get_cluster : user introuvable !")
+      return -1
+    }
+    
+    return(k$cluster[user_rang])
+}
+# test : 228342 (rang = 2)
+get_cluster(228342, k6) 
+# test : 82964 (rang = 12)
+get_cluster(82964, k6)
+# test : 777 (rang = -1 introuvable ) --> -1 introuvable
+get_cluster(777, k6)
+# fonction qui retourne la liste des users appartenant au m?me cluster que l'user pass? en param?tre
+# elle prend en argument l'identifiant de l'user, et le K-mean utilis?
+# retourn -1 si user introuvable !
+get_cluster_set <- function(user_id, k) {
+  user_cluster_number = get_cluster(user_id, k)
+  
+  if (user_cluster_number == -1) {
+    print("Erreur dans get_cluster : user introuvable !")
+    return(-1)
+  }
+  set_neighbors <- c()  
+  for (i in 1:(nrow(users_clean))) {
+    if (k$cluster[i] == user_cluster_number) {
+      set_neighbors <- append(set_neighbors, users_clean[i,3])
+    }
+  }
+  return(set_neighbors)
+}
+# test
+get_cluster_set(327311, k6)
+#get_cluster_set(0091, k6)
+#fviz_cluster(k, data = users)
+#distance <- get_dist(users)
+#fviz_dist(distance, gradient = List(low = "#00AFBB", mid = "white", high = "#FC4E07"))
+```
+
+
+## Collaborative
+For the dataset, we will use the data preprocessed in the fist delivery.
+```{r}
+UsersDF <- read.csv("userListCleaned.csv")
+ScoresDF <-read.csv("UserAnimeList-R-Ultimate.csv")
+AnimesDF <- read.csv("AnimeList.csv")
+head(UsersDF)
+```
+
+```{r}
+head(AnimesDF)
+```
+
+
+```{r}
+head(ScoresDF)
+```
+
+Show some statistics about ratings
+```{r}
+summary(ScoresDF$my_score)
+
+#library(Hmisc)
+#describe(ScoresDF$my_score)
+```
+
+
+Counting how many relevant scores each user have done and changing the column names
+```{r}
+UsersAndScores <- as.data.frame(table(ScoresDF['username']))
+names(UsersAndScores) <- c("username", "animes_rated")
+head(UsersAndScores)
+```
+
+
+```{r}
+sample_ratio = 0.05
+UsersAndScoresSampled <- UsersAndScores[sample(1:nrow(UsersAndScores)
+                                            ,nrow(UsersAndScores)*sample_ratio
+                                            ,replace=FALSE),]
+head(UsersAndScoresSampled)
+```
+
+Since the DF will be too big to run some of the later algorithms, we sampled 5% of the users. The reason behind doing this right now in this specific DF is to sample people without losing info about their ratings. If we sampled them in the ScoresDF, an example that we tried to avoid is sampling a customer that had 100 interactions with just 1 interaction now, and that would hurt the accuracy of the model later on.
+
+```{r}
+#Grouping users whom had the same amount of animes rated
+UserRatedsAggregated <- as.data.frame(table(UsersAndScoresSampled['animes_rated']))
+names(UserRatedsAggregated) <- c("animes_rated", "group_size")
+head(UserRatedsAggregated)
+```
+
+```{r}
+#Counting how many relevant scores each anime has
+RatedsPerAnime <- as.data.frame(table(ScoresDF['anime_id']))
+names(RatedsPerAnime) <- c("anime_id","number_of_users")
+head(RatedsPerAnime)
+```
+
+```{r}
+#Creating the plots so we can gather information about the distribution of ratings in the sample
+library(ggplot2)
+ggplot(UserRatedsAggregated, aes(x=animes_rated, y=group_size)) +
+  geom_bar(stat = "identity")+
+  coord_cartesian(xlim = c(200, 220))+# we show some data here so that the graph can be clear
+  labs(title = "Distribution of users",
+       x = 'Number of animes rated',
+       y = 'Number of people in that group')
+```
+
+Here we create another dataframe which contains only users and animes that have at least 10 interactions. We then combine this data by merging our initial frame with the RatedsPerUser and the RatedsPerAnime.
+
+The reason for this is trying to solve a problem that Recommender Systems commonly runs in to, that is the 'Cold Start Problem'. It is really hard to recommend something to a customer that you do not have data about, but there are several ways to deal with it, such as a Popularity Recommender (where we'll recommend to our new users the most liked products) and other stuff, but we'll just exclude them from this analysis since we already have a lot of data.
+```{r}
+#Creating a dataframe of users  and animes with more than 10 interactions
+UserRatedsCutten <- UsersAndScoresSampled[which(UsersAndScoresSampled$animes_rated >= 10),]
+AnimeRatedsCutten <- RatedsPerAnime[which(RatedsPerAnime$number_of_users>= 10),]
+#Joining (merging) our new dataframes with the interactions one (this will already deal with the sample problem as it is an inner join). The "HotStart" name comes from a pun about solving the "Cold Start" issue
+ScoresDFHotStart <- merge(ScoresDF,
+                          UserRatedsCutten,
+                          by.x = 'username',
+                          by.y = 'username',
+                          all.y = T)
+ScoresDFHotStart <- merge(ScoresDFHotStart,
+                          AnimeRatedsCutten,
+                          by.x = 'anime_id',
+                          by.y = 'anime_id',
+                          all.y = T)
+ScoresDFHotStart <- na.omit(ScoresDFHotStart)
+head(ScoresDFHotStart)
+```
+
+
+Another info that would be interesting to know is how are the user scores distributed. That could explain us what number represents something that the user liked or not (and will be used later on as a treshold too).
+
+```{r}
+#Grouping the different scores
+AnimeRates <- as.data.frame(table(ScoresDF$my_score))
+names(AnimeRates) <- c("Rates", "Frequency")
+ggplot(AnimeRates, aes(Rates,Frequency)) +
+  coord_cartesian(ylim = c(45000, 4600000))+
+  geom_bar(stat = "identity")+
+  labs(title = "Distribution of anime scores",
+       x = 'Score',
+       y = 'Score Frequency')
+```
+
+Here we can imply being that the data has a peak at the score of number '7', probably when someone really likes a show it rates them at that minimum. Interesting to see too that we have a lot of rated '0', Otakus are really demanding apparently.
+
+## Training, testing and results structure?
+
+Our idea is to create a user-based algorithm, where you could input a specific username and it would return to you the top@K recommendations, and use several methods and techniques like CF, SVD, a random algorithm and an algorithm that recommend popular animes.
+
+So, how can we know if my algorithm is performing well or not? For this problem we split the data in a Training and a Test dataset (with a 75/25 proportion). The idea behind it is to try to guess the score for animes where we actually can do a comparison. For instance, lets say you gave an score of 10, 9, 8 and 3 to the following shows: Dragon Ball Z, Pokemon, Naruto and One Piece. We then split the first three animes, learn by it and try to estimate what would be your One Piece score, and the difference of the estimated score and the true score would tell us the performance of the recommender.
+
+### Collaborative Model creation
+
+We are going to create a model called UBCF or U(ser) B(ased) C(ollaborative) F(iltering) trained with 1620 users ( from the sampled data frames)
+Alternatively, we could use a less memory intensive approach without having to load the entire user data base in memory called IBCF - I(tem) B(ased) C(ollaborative) F(iltering)
+```{r}
+library("recommenderlab")
+# store the scores in a rating matrix with real valued ratings in sparse format defined in package Matrix of recommenderlab library
+rsample <- ScoresDFHotStart[,c(2,1,3)]
+r<- as(rsample,"realRatingMatrix")
+```
+
+
+```{r}
+# create the recommender model that learns from the data and use the UBCF method
+rec <- Recommender(data = r , method = "UBCF")
+matrix <- as(r, "data.frame")
+rec
+```
+### The model in action - top N items and item affinity
+
+```{r}
+# recommended top 5 items for the first user or any other user that we can retrieve from the initial "matrix"
+user <- r[1,]
+recommended_user <- predict(rec, user, n=5)
+# to display them
+recommendedL <- as(recommended_user, "list")
+recommendedL <- unlist(recommendedL, use.names=F)
+
+recommendedDF <- AnimesDF[AnimesDF$anime_id %in% recommendedL,][c("anime_id","title","genre")]
+head(recommendedDF)
+```
+
+```{r}
+# Predict list of product which can be recommended to given users	 	
+#to predict scores to all non-rated items 
+predicted_user <- predict(rec, user, type="ratings")
+# to see the user's predicted scores for items we didn't have any value for
+predictedRatingsL <- as(predicted_user, "data.frame")[2:3]
+names(predictedRatingsL) <- c("anime_id","predicted_rate")
+predictedRatingAnime <- merge(predictedRatingsL,
+                         AnimesDF[c("anime_id","title","genre")],
+                         by.x = 'anime_id',
+                         by.y = 'anime_id',
+                         all.x = T)
+# .. and the real affinity for the items obtained from the affinity.matrix
+realRatingsL <- as(user, "data.frame")[2:3]
+names(realRatingsL) <- c("anime_id","real_rate")
+realRatingAnime <- merge(realRatingsL,
+                         AnimesDF[c("anime_id","title","genre")],
+                         by.x = 'anime_id',
+                         by.y = 'anime_id',
+                         all.x = T)
+head(predictedRatingAnime)
+head(realRatingAnime)
+```
+
+For this particular user, we can see that the recommender estimated a good rate for 'Shingeki no Kyojin' anime (5,3 was low because the user rated many shows with 0, seems he has a special taste of anime) as well as 'Kimi no Na wa' and 'Sword Art Online'	which are very popular animes, and we can see that the recommendation is relevant to animes watched by the user like 'Death Note' and 'Code Geass: Hangyaku no Lelouc' which are popular and share some genres with the recommended animes.
+
+### Validation
+
+To evaluate our Rec.model we need data, more precisely, experimentally obtained data. The only experimentally obtained data source is our ScoresDFHotStart dataframe, so we need to take a chunk to train our model, but leave another chunk to validate whether the model produces the right output.
+
+```{r}
+# create evaluation scheme splitting taking 90% of the date for training and leaving 10% for validation or test
+e <- evaluationScheme(r[1:1566], method="split", train=0.75, given=3)
+# creation of recommender model based on ubcf
+Rec.ubcf <- Recommender(getData(e, "train"), "UBCF")
+# creation of recommender model using SVD with column-mean imputation for comparison
+Rec.svd <- Recommender(getData(e, "train"), "SVD")
+#Randomly chosen items for comparison (RANDOM)
+Rec.random <- Recommender(getData(e, "train"), "RANDOM")
+# creation of recommender model using POPULAR that recommends popular items, for comparison
+Rec.popular <- Recommender(getData(e, "train"), "POPULAR")
+# making predictions on the test data set
+p.ubcf <- predict(Rec.ubcf, getData(e, "known"), type="ratings")
+p.svd <- predict(Rec.svd, getData(e, "known"), type="ratings")
+p.popular <- predict(Rec.popular, getData(e, "known"), type="ratings")
+p.random <- predict(Rec.random, getData(e, "known"), type="ratings")
+# obtaining the error metrics for both approaches and comparing them
+error.ubcf<-calcPredictionAccuracy(p.ubcf, getData(e, "unknown"))
+error.svd<-calcPredictionAccuracy(p.svd, getData(e, "unknown"))
+error.popular<-calcPredictionAccuracy(p.popular, getData(e, "unknown"))
+error.random<-calcPredictionAccuracy(p.random, getData(e, "unknown"))
+error <- rbind(error.ubcf,error.svd,error.popular,error.random)
+rownames(error) <- c("UBCF","SVD","POPULAR","RANDOM")
+error
+```
