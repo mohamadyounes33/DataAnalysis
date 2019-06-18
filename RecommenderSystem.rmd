@@ -1,0 +1,208 @@
+---
+title: "MyAnimeList Recommender System"
+output: html_notebook
+---
+
+#Datasets:
+For the dataset, we will use the data preprocessed in the fist delivery.
+```{r}
+UsersDF <- read.csv("userListCleaned.csv")
+ScoresDF <-read.csv("UserAnimeList-R-Ultimate.csv")
+AnimesDF <- read.csv("AnimeList.csv")
+head(UsersDF)
+```
+
+```{r}
+head(AnimesDF)
+```
+
+
+```{r}
+head(ScoresDF)
+```
+
+Show some statistics about ratings
+```{r}
+summary(ScoresDF$my_score)
+
+#library(Hmisc)
+#describe(ScoresDF$my_score)
+```
+
+
+Counting how many relevant scores each user have done and changing the column names
+```{r}
+UsersAndScores <- as.data.frame(table(ScoresDF['username']))
+names(UsersAndScores) <- c("username", "animes_rated")
+head(UsersAndScores)
+```
+
+
+```{r}
+sample_ratio = 0.05
+UsersAndScoresSampled <- UsersAndScores[sample(1:nrow(UsersAndScores)
+                                            ,nrow(UsersAndScores)*sample_ratio
+                                            ,replace=FALSE),]
+head(UsersAndScoresSampled)
+```
+
+Since the DF will be too big to run some of the later algorithms, we sampled 5% of the users. The reason behind doing this right now in this specific DF is to sample people without losing info about their ratings. If we sampled them in the ScoresDF, an example that we tried to avoid is sampling a customer that had 100 interactions with just 1 interaction now, and that would hurt the accuracy of the model later on.
+
+```{r}
+#Grouping users whom had the same amount of animes rated
+UserRatedsAggregated <- as.data.frame(table(UsersAndScoresSampled['animes_rated']))
+names(UserRatedsAggregated) <- c("animes_rated", "group_size")
+head(UserRatedsAggregated)
+```
+
+```{r}
+#Counting how many relevant scores each anime has
+RatedsPerAnime <- as.data.frame(table(ScoresDF['anime_id']))
+names(RatedsPerAnime) <- c("anime_id","number_of_users")
+head(RatedsPerAnime)
+```
+
+```{r}
+#Creating the plots so we can gather information about the distribution of ratings in the sample
+library(ggplot2)
+ggplot(UserRatedsAggregated, aes(x=animes_rated, y=group_size)) +
+  geom_bar(stat = "identity")+
+  coord_cartesian(xlim = c(200, 220))+# we show some data here so that the graph can be clear
+  labs(title = "Distribution of users",
+       x = 'Number of animes rated',
+       y = 'Number of people in that group')
+```
+
+Here we create another dataframe which contains only users and animes that have at least 10 interactions. We then combine this data by merging our initial frame with the RatedsPerUser and the RatedsPerAnime.
+
+The reason for this is trying to solve a problem that Recommender Systems commonly runs in to, that is the 'Cold Start Problem'. It is really hard to recommend something to a customer that you do not have data about, but there are several ways to deal with it, such as a Popularity Recommender (where we'll recommend to our new users the most liked products) and other stuff, but we'll just exclude them from this analysis since we already have a lot of data.
+```{r}
+#Creating a dataframe of users  and animes with more than 10 interactions
+UserRatedsCutten <- UsersAndScoresSampled[which(UsersAndScoresSampled$animes_rated >= 10),]
+AnimeRatedsCutten <- RatedsPerAnime[which(RatedsPerAnime$number_of_users>= 10),]
+#Joining (merging) our new dataframes with the interactions one (this will already deal with the sample problem as it is an inner join). The "HotStart" name comes from a pun about solving the "Cold Start" issue
+ScoresDFHotStart <- merge(ScoresDF,
+                          UserRatedsCutten,
+                          by.x = 'username',
+                          by.y = 'username',
+                          all.y = T)
+ScoresDFHotStart <- merge(ScoresDFHotStart,
+                          AnimeRatedsCutten,
+                          by.x = 'anime_id',
+                          by.y = 'anime_id',
+                          all.y = T)
+ScoresDFHotStart <- na.omit(ScoresDFHotStart)
+head(ScoresDFHotStart)
+```
+
+
+Another info that would be interesting to know is how are the user scores distributed. That could explain us what number represents something that the user liked or not (and will be used later on as a treshold too).
+
+```{r}
+#Grouping the different scores
+AnimeRates <- as.data.frame(table(ScoresDF$my_score))
+names(AnimeRates) <- c("Rates", "Frequency")
+ggplot(AnimeRates, aes(Rates,Frequency)) +
+  coord_cartesian(ylim = c(45000, 4600000))+
+  geom_bar(stat = "identity")+
+  labs(title = "Distribution of anime scores",
+       x = 'Score',
+       y = 'Score Frequency')
+```
+
+Here we can imply being that the data has a peak at the score of number '7', probably when someone really likes a show it rates them at that minimum. Interesting to see too that we have a lot of rated '0', Otakus are really demanding apparently.
+
+#Training, testing and results structure?
+
+Our idea is to create a user-based algorithm, where you could input a specific username and it would return to you the top@K recommendations, and use several methods and techniques like CF, SVD, a random algorithm and an algorithm that recommend popular animes.
+
+So, how can we know if my algorithm is performing well or not? For this problem we split the data in a Training and a Test dataset (with a 75/25 proportion). The idea behind it is to try to guess the score for animes where we actually can do a comparison. For instance, lets say you gave an score of 10, 9, 8 and 3 to the following shows: Dragon Ball Z, Pokemon, Naruto and One Piece. We then split the first three animes, learn by it and try to estimate what would be your One Piece score, and the difference of the estimated score and the true score would tell us the performance of the recommender.
+
+## Collaborative Model creation
+
+We are going to create a model called UBCF or U(ser) B(ased) C(ollaborative) F(iltering) trained with 1620 users ( from the sampled data frames)
+Alternatively, we could use a less memory intensive approach without having to load the entire user data base in memory called IBCF - I(tem) B(ased) C(ollaborative) F(iltering)
+```{r}
+library("recommenderlab")
+# store the scores in a rating matrix with real valued ratings in sparse format defined in package Matrix of recommenderlab library
+rsample <- ScoresDFHotStart[,c(2,1,3)]
+r<- as(rsample,"realRatingMatrix")
+```
+
+
+```{r}
+# create the recommender model that learns from the data and use the UBCF method
+rec <- Recommender(data = r , method = "UBCF")
+matrix <- as(r, "data.frame")
+rec
+```
+## The model in action - top N items and item affinity
+
+```{r}
+# recommended top 5 items for the first user or any other user that we can retrieve from the initial "matrix"
+user <- r[1,]
+recommended_user <- predict(rec, user, n=5)
+# to display them
+recommendedL <- as(recommended_user, "list")
+recommendedL <- unlist(recommendedL, use.names=F)
+
+recommendedDF <- AnimesDF[AnimesDF$anime_id %in% recommendedL,][c("anime_id","title","genre")]
+head(recommendedDF)
+```
+
+```{r}
+# Predict list of product which can be recommended to given users	 	
+#to predict scores to all non-rated items 
+predicted_user <- predict(rec, user, type="ratings")
+# to see the user's predicted scores for items we didn't have any value for
+predictedRatingsL <- as(predicted_user, "data.frame")[2:3]
+names(predictedRatingsL) <- c("anime_id","predicted_rate")
+predictedRatingAnime <- merge(predictedRatingsL,
+                         AnimesDF[c("anime_id","title","genre")],
+                         by.x = 'anime_id',
+                         by.y = 'anime_id',
+                         all.x = T)
+# .. and the real affinity for the items obtained from the affinity.matrix
+realRatingsL <- as(user, "data.frame")[2:3]
+names(realRatingsL) <- c("anime_id","real_rate")
+realRatingAnime <- merge(realRatingsL,
+                         AnimesDF[c("anime_id","title","genre")],
+                         by.x = 'anime_id',
+                         by.y = 'anime_id',
+                         all.x = T)
+head(predictedRatingAnime)
+head(realRatingAnime)
+```
+
+For this particular user, we can see that the recommender estimated a good rate for 'Shingeki no Kyojin' anime (5,3 was low because the user rated many shows with 0, seems he has a special taste of anime) as well as 'Kimi no Na wa' and 'Sword Art Online'	which are very popular animes, and we can see that the recommendation is relevant to animes watched by the user like 'Death Note' and 'Code Geass: Hangyaku no Lelouc' which are popular and share some genres with the recommended animes.
+
+## Validation
+
+To evaluate our Rec.model we need data, more precisely, experimentally obtained data. The only experimentally obtained data source is our ScoresDFHotStart dataframe, so we need to take a chunk to train our model, but leave another chunk to validate whether the model produces the right output.
+
+```{r}
+# create evaluation scheme splitting taking 90% of the date for training and leaving 10% for validation or test
+e <- evaluationScheme(r[1:1566], method="split", train=0.75, given=3)
+# creation of recommender model based on ubcf
+Rec.ubcf <- Recommender(getData(e, "train"), "UBCF")
+# creation of recommender model using SVD with column-mean imputation for comparison
+Rec.svd <- Recommender(getData(e, "train"), "SVD")
+#Randomly chosen items for comparison (RANDOM)
+Rec.random <- Recommender(getData(e, "train"), "RANDOM")
+# creation of recommender model using POPULAR that recommends popular items, for comparison
+Rec.popular <- Recommender(getData(e, "train"), "POPULAR")
+# making predictions on the test data set
+p.ubcf <- predict(Rec.ubcf, getData(e, "known"), type="ratings")
+p.svd <- predict(Rec.svd, getData(e, "known"), type="ratings")
+p.popular <- predict(Rec.popular, getData(e, "known"), type="ratings")
+p.random <- predict(Rec.random, getData(e, "known"), type="ratings")
+# obtaining the error metrics for both approaches and comparing them
+error.ubcf<-calcPredictionAccuracy(p.ubcf, getData(e, "unknown"))
+error.svd<-calcPredictionAccuracy(p.svd, getData(e, "unknown"))
+error.popular<-calcPredictionAccuracy(p.popular, getData(e, "unknown"))
+error.random<-calcPredictionAccuracy(p.random, getData(e, "unknown"))
+error <- rbind(error.ubcf,error.svd,error.popular,error.random)
+rownames(error) <- c("UBCF","SVD","POPULAR","RANDOM")
+error
+```
+
